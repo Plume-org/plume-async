@@ -7,7 +7,6 @@ use plume_common::activity_pub::inbox::AsActor;
 use posts::Post;
 use schema::mentions;
 use users::User;
-use PlumeRocket;
 use {Connection, Error, Result};
 
 #[derive(Clone, Queryable, Identifiable)]
@@ -56,14 +55,6 @@ impl Mention {
         }
     }
 
-    pub fn build_activity(c: &PlumeRocket, ment: &str) -> Result<link::Mention> {
-        let user = User::find_by_fqn(c, ment)?;
-        let mut mention = link::Mention::default();
-        mention.link_props.set_href_string(user.ap_url)?;
-        mention.link_props.set_name_string(format!("@{}", ment))?;
-        Ok(mention)
-    }
-
     pub fn to_activity(&self, conn: &Connection) -> Result<link::Mention> {
         let user = self.get_mentioned(conn)?;
         let mut mention = link::Mention::default();
@@ -72,49 +63,6 @@ impl Mention {
             .link_props
             .set_name_string(format!("@{}", user.fqn))?;
         Ok(mention)
-    }
-
-    pub fn from_activity(
-        conn: &Connection,
-        ment: &link::Mention,
-        inside: i32,
-        in_post: bool,
-        notify: bool,
-    ) -> Result<Self> {
-        let ap_url = ment.link_props.href_string().ok()?;
-        let mentioned = User::find_by_ap_url(conn, &ap_url)?;
-
-        if in_post {
-            Post::get(conn, inside).and_then(|post| {
-                let res = Mention::insert(
-                    conn,
-                    NewMention {
-                        mentioned_id: mentioned.id,
-                        post_id: Some(post.id),
-                        comment_id: None,
-                    },
-                )?;
-                if notify {
-                    res.notify(conn)?;
-                }
-                Ok(res)
-            })
-        } else {
-            Comment::get(conn, inside).and_then(|comment| {
-                let res = Mention::insert(
-                    conn,
-                    NewMention {
-                        mentioned_id: mentioned.id,
-                        post_id: None,
-                        comment_id: Some(comment.id),
-                    },
-                )?;
-                if notify {
-                    res.notify(conn)?;
-                }
-                Ok(res)
-            })
-        }
     }
 
     pub fn delete(&self, conn: &Connection) -> Result<()> {
@@ -126,22 +74,5 @@ impl Mention {
             .execute(conn)
             .map(|_| ())
             .map_err(Error::from)
-    }
-
-    fn notify(&self, conn: &Connection) -> Result<()> {
-        let m = self.get_mentioned(conn)?;
-        if m.is_local() {
-            Notification::insert(
-                conn,
-                NewNotification {
-                    kind: notification_kind::MENTION.to_string(),
-                    object_id: self.id,
-                    user_id: m.id,
-                },
-            )
-            .map(|_| ())
-        } else {
-            Ok(())
-        }
     }
 }

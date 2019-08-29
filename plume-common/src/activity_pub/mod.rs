@@ -1,12 +1,6 @@
 use activitypub::{Activity, Link, Object};
 use array_tool::vec::Uniq;
 use reqwest::r#async::ClientBuilder;
-use rocket::{
-    http::Status,
-    request::{FromRequest, Request},
-    response::{Responder, Response},
-    Outcome,
-};
 use serde_json;
 use tokio::prelude::*;
 
@@ -63,51 +57,6 @@ impl<T> ActivityStream<T> {
     }
 }
 
-impl<'r, O: Object> Responder<'r> for ActivityStream<O> {
-    fn respond_to(self, request: &Request) -> Result<Response<'r>, Status> {
-        let mut json = serde_json::to_value(&self.0).map_err(|_| Status::InternalServerError)?;
-        json["@context"] = context();
-        serde_json::to_string(&json).respond_to(request).map(|r| {
-            Response::build_from(r)
-                .raw_header("Content-Type", "application/activity+json")
-                .finalize()
-        })
-    }
-}
-
-#[derive(Clone)]
-pub struct ApRequest;
-impl<'a, 'r> FromRequest<'a, 'r> for ApRequest {
-    type Error = ();
-
-    fn from_request(request: &'a Request<'r>) -> Outcome<Self, (Status, Self::Error), ()> {
-        request
-            .headers()
-            .get_one("Accept")
-            .map(|header| {
-                header
-                    .split(',')
-                    .map(|ct| match ct.trim() {
-                        // bool for Forward: true if found a valid Content-Type for Plume first (HTML), false otherwise
-                        "application/ld+json; profile=\"https://w3.org/ns/activitystreams\""
-                        | "application/ld+json;profile=\"https://w3.org/ns/activitystreams\""
-                        | "application/activity+json"
-                        | "application/ld+json" => Outcome::Success(ApRequest),
-                        "text/html" => Outcome::Forward(true),
-                        _ => Outcome::Forward(false),
-                    })
-                    .fold(Outcome::Forward(false), |out, ct| {
-                        if out.clone().forwarded().unwrap_or_else(|| out.is_success()) {
-                            out
-                        } else {
-                            ct
-                        }
-                    })
-                    .map_forward(|_| ())
-            })
-            .unwrap_or(Outcome::Forward(()))
-    }
-}
 pub fn broadcast<S, A, T, C>(sender: &S, act: A, to: Vec<T>)
 where
     S: sign::Signer,

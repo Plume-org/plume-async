@@ -1,4 +1,5 @@
 #![feature(custom_attribute, associated_type_defaults)]
+#![allow(dead_code)]
 
 extern crate activitypub;
 #[macro_use]
@@ -12,7 +13,6 @@ extern crate hex;
 extern crate openssl;
 extern crate pulldown_cmark;
 extern crate reqwest;
-extern crate rocket;
 extern crate serde;
 #[macro_use]
 extern crate shrinkwraprs;
