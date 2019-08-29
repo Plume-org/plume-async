@@ -27,7 +27,7 @@ use schema::posts;
 use search::Searcher;
 use tags::*;
 use users::User;
-use {ap_url, Connection, Error, PlumeRocket, Result, CONFIG};
+use {ap_url, Connection, Error, Result};
 
 pub type LicensedArticle = CustomObject<Licensed, Article>;
 
@@ -68,26 +68,6 @@ impl Post {
     get!(posts);
     find_by!(posts, find_by_slug, slug as &str, blog_id as i32);
     find_by!(posts, find_by_ap_url, ap_url as &str);
-
-    last!(posts);
-    pub fn insert(conn: &Connection, new: NewPost, searcher: &Searcher) -> Result<Self> {
-        diesel::insert_into(posts::table)
-            .values(new)
-            .execute(conn)?;
-        let mut post = Self::last(conn)?;
-        if post.ap_url.is_empty() {
-            post.ap_url = ap_url(&format!(
-                "{}/~/{}/{}/",
-                CONFIG.base_url,
-                post.get_blog(conn)?.fqn,
-                post.slug
-            ));
-            let _: Post = post.save_changes(conn)?;
-        }
-
-        searcher.add_document(conn, &post)?;
-        Ok(post)
-    }
 
     pub fn update(&self, conn: &Connection, searcher: &Searcher) -> Result<Self> {
         diesel::update(self).set(self).execute(conn)?;
@@ -477,52 +457,6 @@ impl Post {
         Ok(act)
     }
 
-    pub fn update_mentions(&self, conn: &Connection, mentions: Vec<link::Mention>) -> Result<()> {
-        let mentions = mentions
-            .into_iter()
-            .map(|m| {
-                (
-                    m.link_props
-                        .href_string()
-                        .ok()
-                        .and_then(|ap_url| User::find_by_ap_url(conn, &ap_url).ok())
-                        .map(|u| u.id),
-                    m,
-                )
-            })
-            .filter_map(|(id, m)| {
-                if let Some(id) = id {
-                    Some((m, id))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let old_mentions = Mention::list_for_post(&conn, self.id)?;
-        let old_user_mentioned = old_mentions
-            .iter()
-            .map(|m| m.mentioned_id)
-            .collect::<HashSet<_>>();
-        for (m, id) in &mentions {
-            if !old_user_mentioned.contains(&id) {
-                Mention::from_activity(&*conn, &m, self.id, true, true)?;
-            }
-        }
-
-        let new_mentions = mentions
-            .into_iter()
-            .map(|(_m, id)| id)
-            .collect::<HashSet<_>>();
-        for m in old_mentions
-            .iter()
-            .filter(|m| !new_mentions.contains(&m.mentioned_id))
-        {
-            m.delete(&conn)?;
-        }
-        Ok(())
-    }
-
     pub fn update_tags(&self, conn: &Connection, tags: Vec<Hashtag>) -> Result<()> {
         let tags_name = tags
             .iter()
@@ -623,131 +557,6 @@ impl Post {
     }
 }
 
-impl FromId<PlumeRocket> for Post {
-    type Error = Error;
-    type Object = LicensedArticle;
-
-    fn from_db(c: &PlumeRocket, id: &str) -> Result<Self> {
-        Self::find_by_ap_url(&c.conn, id)
-    }
-
-    fn from_activity(c: &PlumeRocket, article: LicensedArticle) -> Result<Self> {
-        let conn = &*c.conn;
-        let searcher = &c.searcher;
-        let license = article.custom_props.license_string().unwrap_or_default();
-        let article = article.object;
-
-        let (blog, authors) = article
-            .object_props
-            .attributed_to_link_vec::<Id>()?
-            .into_iter()
-            .fold((None, vec![]), |(blog, mut authors), link| {
-                let url = link;
-                match User::from_id(&c, &url, None) {
-                    Ok(u) => {
-                        authors.push(u);
-                        (blog, authors)
-                    }
-                    Err(_) => (blog.or_else(|| Blog::from_id(&c, &url, None).ok()), authors),
-                }
-            });
-
-        let cover = article
-            .object_props
-            .icon_object::<Image>()
-            .ok()
-            .and_then(|img| Media::from_activity(&c, &img).ok().map(|m| m.id));
-
-        let title = article.object_props.name_string()?;
-        let post = Post::insert(
-            conn,
-            NewPost {
-                blog_id: blog?.id,
-                slug: title.to_kebab_case(),
-                title,
-                content: SafeString::new(&article.object_props.content_string()?),
-                published: true,
-                license,
-                // FIXME: This is wrong: with this logic, we may use the display URL as the AP ID. We need two different fields
-                ap_url: article
-                    .object_props
-                    .url_string()
-                    .or_else(|_| article.object_props.id_string())?,
-                creation_date: Some(article.object_props.published_utctime()?.naive_utc()),
-                subtitle: article.object_props.summary_string()?,
-                source: article.ap_object_props.source_object::<Source>()?.content,
-                cover_id: cover,
-            },
-            searcher,
-        )?;
-
-        for author in authors {
-            PostAuthor::insert(
-                conn,
-                NewPostAuthor {
-                    post_id: post.id,
-                    author_id: author.id,
-                },
-            )?;
-        }
-
-        // save mentions and tags
-        let mut hashtags = md_to_html(&post.source, None, false, None)
-            .2
-            .into_iter()
-            .map(|s| s.to_camel_case())
-            .collect::<HashSet<_>>();
-        if let Some(serde_json::Value::Array(tags)) = article.object_props.tag.clone() {
-            for tag in tags {
-                serde_json::from_value::<link::Mention>(tag.clone())
-                    .map(|m| Mention::from_activity(conn, &m, post.id, true, true))
-                    .ok();
-
-                serde_json::from_value::<Hashtag>(tag.clone())
-                    .map_err(Error::from)
-                    .and_then(|t| {
-                        let tag_name = t.name_string()?;
-                        Ok(Tag::from_activity(
-                            conn,
-                            &t,
-                            post.id,
-                            hashtags.remove(&tag_name),
-                        ))
-                    })
-                    .ok();
-            }
-        }
-        Ok(post)
-    }
-}
-
-impl AsObject<User, Create, &PlumeRocket> for Post {
-    type Error = Error;
-    type Output = Post;
-
-    fn activity(self, _c: &PlumeRocket, _actor: User, _id: &str) -> Result<Post> {
-        // TODO: check that _actor is actually one of the author?
-        Ok(self)
-    }
-}
-
-impl AsObject<User, Delete, &PlumeRocket> for Post {
-    type Error = Error;
-    type Output = ();
-
-    fn activity(self, c: &PlumeRocket, actor: User, _id: &str) -> Result<()> {
-        let can_delete = self
-            .get_authors(&c.conn)?
-            .into_iter()
-            .any(|a| actor.id == a.id);
-        if can_delete {
-            self.delete(&c.conn, &c.searcher).map(|_| ())
-        } else {
-            Err(Error::Unauthorized)
-        }
-    }
-}
-
 pub struct PostUpdate {
     pub ap_url: String,
     pub title: Option<String>,
@@ -757,113 +566,6 @@ pub struct PostUpdate {
     pub source: Option<String>,
     pub license: Option<String>,
     pub tags: Option<serde_json::Value>,
-}
-
-impl FromId<PlumeRocket> for PostUpdate {
-    type Error = Error;
-    type Object = LicensedArticle;
-
-    fn from_db(_: &PlumeRocket, _: &str) -> Result<Self> {
-        // Always fail because we always want to deserialize the AP object
-        Err(Error::NotFound)
-    }
-
-    fn from_activity(c: &PlumeRocket, updated: LicensedArticle) -> Result<Self> {
-        Ok(PostUpdate {
-            ap_url: updated.object.object_props.id_string()?,
-            title: updated.object.object_props.name_string().ok(),
-            subtitle: updated.object.object_props.summary_string().ok(),
-            content: updated.object.object_props.content_string().ok(),
-            cover: updated
-                .object
-                .object_props
-                .icon_object::<Image>()
-                .ok()
-                .and_then(|img| Media::from_activity(&c, &img).ok().map(|m| m.id)),
-            source: updated
-                .object
-                .ap_object_props
-                .source_object::<Source>()
-                .ok()
-                .map(|x| x.content),
-            license: updated.custom_props.license_string().ok(),
-            tags: updated.object.object_props.tag.clone(),
-        })
-    }
-}
-
-impl AsObject<User, Update, &PlumeRocket> for PostUpdate {
-    type Error = Error;
-    type Output = ();
-
-    fn activity(self, c: &PlumeRocket, actor: User, _id: &str) -> Result<()> {
-        let conn = &*c.conn;
-        let searcher = &c.searcher;
-        let mut post = Post::from_id(c, &self.ap_url, None).map_err(|(_, e)| e)?;
-
-        if !post.is_author(conn, actor.id)? {
-            // TODO: maybe the author was added in the meantime
-            return Err(Error::Unauthorized);
-        }
-
-        if let Some(title) = self.title {
-            post.slug = title.to_kebab_case();
-            post.title = title;
-        }
-
-        if let Some(content) = self.content {
-            post.content = SafeString::new(&content);
-        }
-
-        if let Some(subtitle) = self.subtitle {
-            post.subtitle = subtitle;
-        }
-
-        post.cover_id = self.cover;
-
-        if let Some(source) = self.source {
-            post.source = source;
-        }
-
-        if let Some(license) = self.license {
-            post.license = license;
-        }
-
-        let mut txt_hashtags = md_to_html(&post.source, None, false, None)
-            .2
-            .into_iter()
-            .map(|s| s.to_camel_case())
-            .collect::<HashSet<_>>();
-        if let Some(serde_json::Value::Array(mention_tags)) = self.tags {
-            let mut mentions = vec![];
-            let mut tags = vec![];
-            let mut hashtags = vec![];
-            for tag in mention_tags {
-                serde_json::from_value::<link::Mention>(tag.clone())
-                    .map(|m| mentions.push(m))
-                    .ok();
-
-                serde_json::from_value::<Hashtag>(tag.clone())
-                    .map_err(Error::from)
-                    .and_then(|t| {
-                        let tag_name = t.name_string()?;
-                        if txt_hashtags.remove(&tag_name) {
-                            hashtags.push(t);
-                        } else {
-                            tags.push(t);
-                        }
-                        Ok(())
-                    })
-                    .ok();
-            }
-            post.update_mentions(conn, mentions)?;
-            post.update_tags(conn, tags)?;
-            post.update_hashtags(conn, hashtags)?;
-        }
-
-        post.update(conn, searcher)?;
-        Ok(())
-    }
 }
 
 impl IntoId for Post {
@@ -877,61 +579,7 @@ mod tests {
     use super::*;
     use crate::inbox::{inbox, tests::fill_database, InboxResult};
     use crate::safe_string::SafeString;
-    use crate::tests::rockets;
     use diesel::Connection;
-
-    // creates a post, get it's Create activity, delete the post,
-    // "send" the Create to the inbox, and check it works
-    #[test]
-    fn self_federation() {
-        let r = rockets();
-        let conn = &*r.conn;
-        conn.test_transaction::<_, (), _>(|| {
-            let (_, users, blogs) = fill_database(&r);
-            let post = Post::insert(
-                conn,
-                NewPost {
-                    blog_id: blogs[0].id,
-                    slug: "yo".into(),
-                    title: "Yo".into(),
-                    content: SafeString::new("Hello"),
-                    published: true,
-                    license: "WTFPL".to_string(),
-                    creation_date: None,
-                    ap_url: String::new(), // automatically updated when inserting
-                    subtitle: "Testing".into(),
-                    source: "Hello".into(),
-                    cover_id: None,
-                },
-                &r.searcher,
-            )
-            .unwrap();
-            PostAuthor::insert(
-                conn,
-                NewPostAuthor {
-                    post_id: post.id,
-                    author_id: users[0].id,
-                },
-            )
-            .unwrap();
-            let create = post.create_activity(conn).unwrap();
-            post.delete(conn, &r.searcher).unwrap();
-
-            match inbox(&r, serde_json::to_value(create).unwrap()).unwrap() {
-                InboxResult::Post(p) => {
-                    assert!(p.is_author(conn, users[0].id).unwrap());
-                    assert_eq!(p.source, "Hello".to_owned());
-                    assert_eq!(p.blog_id, blogs[0].id);
-                    assert_eq!(p.content, SafeString::new("Hello"));
-                    assert_eq!(p.subtitle, "Testing".to_owned());
-                    assert_eq!(p.title, "Yo".to_owned());
-                }
-                _ => panic!("Unexpected result"),
-            };
-
-            Ok(())
-        });
-    }
 
     #[test]
     fn licensed_article_serde() {

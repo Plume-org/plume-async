@@ -12,7 +12,6 @@ extern crate hex;
 extern crate openssl;
 extern crate pulldown_cmark;
 extern crate reqwest;
-extern crate rocket;
 extern crate serde;
 #[macro_use]
 extern crate shrinkwraprs;

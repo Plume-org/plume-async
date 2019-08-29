@@ -14,7 +14,7 @@ use instance::Instance;
 use safe_string::SafeString;
 use schema::medias;
 use users::User;
-use {ap_url, Connection, Error, PlumeRocket, Result};
+use {ap_url, Connection, Error, Result};
 
 #[derive(Clone, Identifiable, Queryable)]
 pub struct Media {
@@ -183,52 +183,6 @@ impl Media {
             .execute(conn)
             .map(|_| ())
             .map_err(Error::from)
-    }
-
-    // TODO: merge with save_remote?
-    pub fn from_activity(c: &PlumeRocket, image: &Image) -> Result<Media> {
-        let conn = &*c.conn;
-        let remote_url = image.object_props.url_string().ok()?;
-        let ext = remote_url
-            .rsplit('.')
-            .next()
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| String::from("png"));
-        let path =
-            Path::new("static")
-                .join("media")
-                .join(format!("{}.{}", GUID::rand().to_string(), ext));
-
-        let mut dest = fs::File::create(path.clone()).ok()?;
-        reqwest::get(remote_url.as_str())
-            .ok()?
-            .copy_to(&mut dest)
-            .ok()?;
-
-        Media::insert(
-            conn,
-            NewMedia {
-                file_path: path.to_str()?.to_string(),
-                alt_text: image.object_props.content_string().ok()?,
-                is_remote: false,
-                remote_url: None,
-                sensitive: image.object_props.summary_string().is_ok(),
-                content_warning: image.object_props.summary_string().ok(),
-                owner_id: User::from_id(
-                    c,
-                    image
-                        .object_props
-                        .attributed_to_link_vec::<Id>()
-                        .ok()?
-                        .into_iter()
-                        .next()?
-                        .as_ref(),
-                    None,
-                )
-                .map_err(|(_, e)| e)?
-                .id,
-            },
-        )
     }
 
     pub fn get_media_processor<'a>(conn: &'a Connection, user: Vec<&User>) -> MediaProcessor<'a> {

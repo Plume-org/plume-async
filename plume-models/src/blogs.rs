@@ -22,7 +22,7 @@ use safe_string::SafeString;
 use schema::blogs;
 use search::Searcher;
 use users::User;
-use {Connection, Error, PlumeRocket, Result};
+use {Connection, Error, Result};
 
 pub type CustomGroup = CustomObject<ApSignature, Group>;
 
@@ -130,29 +130,6 @@ impl Blog {
             .filter(blogs::id.eq_any(author_ids))
             .load::<Blog>(conn)
             .map_err(Error::from)
-    }
-
-    pub fn find_by_fqn(c: &PlumeRocket, fqn: &str) -> Result<Blog> {
-        let from_db = blogs::table
-            .filter(blogs::fqn.eq(fqn))
-            .limit(1)
-            .load::<Blog>(&*c.conn)?
-            .into_iter()
-            .next();
-        if let Some(from_db) = from_db {
-            Ok(from_db)
-        } else {
-            Blog::fetch_from_webfinger(c, fqn)
-        }
-    }
-
-    fn fetch_from_webfinger(c: &PlumeRocket, acct: &str) -> Result<Blog> {
-        resolve_with_prefix(Prefix::Group, acct.to_owned(), true)?
-            .links
-            .into_iter()
-            .find(|l| l.mime_type == Some(String::from("application/activity+json")))
-            .ok_or(Error::Webfinger)
-            .and_then(|l| Blog::from_id(c, &l.href?, None).map_err(|(_, e)| e))
     }
 
     pub fn to_activity(&self, conn: &Connection) -> Result<CustomGroup> {
@@ -300,122 +277,6 @@ impl IntoId for Blog {
     }
 }
 
-impl FromId<PlumeRocket> for Blog {
-    type Error = Error;
-    type Object = CustomGroup;
-
-    fn from_db(c: &PlumeRocket, id: &str) -> Result<Self> {
-        Self::find_by_ap_url(&c.conn, id)
-    }
-
-    fn from_activity(c: &PlumeRocket, acct: CustomGroup) -> Result<Self> {
-        let url = Url::parse(&acct.object.object_props.id_string()?)?;
-        let inst = url.host_str()?;
-        let instance = Instance::find_by_domain(&c.conn, inst).or_else(|_| {
-            Instance::insert(
-                &c.conn,
-                NewInstance {
-                    public_domain: inst.to_owned(),
-                    name: inst.to_owned(),
-                    local: false,
-                    // We don't really care about all the following for remote instances
-                    long_description: SafeString::new(""),
-                    short_description: SafeString::new(""),
-                    default_license: String::new(),
-                    open_registrations: true,
-                    short_description_html: String::new(),
-                    long_description_html: String::new(),
-                },
-            )
-        })?;
-        let icon_id = acct
-            .object
-            .object_props
-            .icon_image()
-            .ok()
-            .and_then(|icon| {
-                let owner = icon.object_props.attributed_to_link::<Id>().ok()?;
-                Media::save_remote(
-                    &c.conn,
-                    icon.object_props.url_string().ok()?,
-                    &User::from_id(c, &owner, None).ok()?,
-                )
-                .ok()
-            })
-            .map(|m| m.id);
-
-        let banner_id = acct
-            .object
-            .object_props
-            .image_image()
-            .ok()
-            .and_then(|banner| {
-                let owner = banner.object_props.attributed_to_link::<Id>().ok()?;
-                Media::save_remote(
-                    &c.conn,
-                    banner.object_props.url_string().ok()?,
-                    &User::from_id(c, &owner, None).ok()?,
-                )
-                .ok()
-            })
-            .map(|m| m.id);
-
-        let name = acct.object.ap_actor_props.preferred_username_string()?;
-        if name.contains(&['<', '>', '&', '@', '\'', '"', ' ', '\t'][..]) {
-            return Err(Error::InvalidValue);
-        }
-
-        Blog::insert(
-            &c.conn,
-            NewBlog {
-                actor_id: name.clone(),
-                title: acct.object.object_props.name_string().unwrap_or(name),
-                outbox_url: acct.object.ap_actor_props.outbox_string()?,
-                inbox_url: acct.object.ap_actor_props.inbox_string()?,
-                summary: acct
-                    .object
-                    .ap_object_props
-                    .source_object::<Source>()
-                    .map(|s| s.content)
-                    .unwrap_or_default(),
-                instance_id: instance.id,
-                ap_url: acct.object.object_props.id_string()?,
-                public_key: acct
-                    .custom_props
-                    .public_key_publickey()?
-                    .public_key_pem_string()?,
-                private_key: None,
-                banner_id,
-                icon_id,
-                summary_html: SafeString::new(
-                    &acct
-                        .object
-                        .object_props
-                        .summary_string()
-                        .unwrap_or_default(),
-                ),
-                theme: None,
-            },
-        )
-    }
-}
-
-impl AsActor<&PlumeRocket> for Blog {
-    fn get_inbox_url(&self) -> String {
-        self.inbox_url.clone()
-    }
-
-    fn get_shared_inbox_url(&self) -> Option<String> {
-        None
-    }
-
-    fn is_local(&self) -> bool {
-        Instance::get_local()
-            .map(|i| self.instance_id == i.id)
-            .unwrap_or(false)
-    }
-}
-
 impl sign::Signer for Blog {
     type Error = Error;
 
@@ -466,7 +327,7 @@ pub(crate) mod tests {
     use instance::tests as instance_tests;
     use medias::NewMedia;
     use search::tests::get_searcher;
-    use tests::{db, rockets};
+    use tests::db;
     use users::tests as usersTests;
     use Connection as Conn;
 
@@ -680,31 +541,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn find_local() {
-        let r = rockets();
-        let conn = &*r.conn;
-        conn.test_transaction::<_, (), _>(|| {
-            fill_database(conn);
-
-            let blog = Blog::insert(
-                conn,
-                NewBlog::new_local(
-                    "SomeName".to_owned(),
-                    "Some name".to_owned(),
-                    "This is some blog".to_owned(),
-                    Instance::get_local().unwrap().id,
-                )
-                .unwrap(),
-            )
-            .unwrap();
-
-            assert_eq!(Blog::find_by_fqn(&r, "SomeName").unwrap().id, blog.id);
-
-            Ok(())
-        });
-    }
-
-    #[test]
     fn get_fqn() {
         let conn = &db();
         conn.test_transaction::<_, (), _>(|| {
@@ -812,64 +648,4 @@ pub(crate) mod tests {
         });
     }
 
-    #[test]
-    fn self_federation() {
-        let r = rockets();
-        let conn = &*r.conn;
-        conn.test_transaction::<_, (), _>(|| {
-            let (users, mut blogs) = fill_database(conn);
-            blogs[0].icon_id = Some(
-                Media::insert(
-                    conn,
-                    NewMedia {
-                        file_path: "aaa.png".into(),
-                        alt_text: String::new(),
-                        is_remote: false,
-                        remote_url: None,
-                        sensitive: false,
-                        content_warning: None,
-                        owner_id: users[0].id,
-                    },
-                )
-                .unwrap()
-                .id,
-            );
-            blogs[0].banner_id = Some(
-                Media::insert(
-                    conn,
-                    NewMedia {
-                        file_path: "bbb.png".into(),
-                        alt_text: String::new(),
-                        is_remote: false,
-                        remote_url: None,
-                        sensitive: false,
-                        content_warning: None,
-                        owner_id: users[0].id,
-                    },
-                )
-                .unwrap()
-                .id,
-            );
-            let _: Blog = blogs[0].save_changes(conn).unwrap();
-
-            let ap_repr = blogs[0].to_activity(conn).unwrap();
-            blogs[0].delete(conn, &*r.searcher).unwrap();
-            let blog = Blog::from_activity(&r, ap_repr).unwrap();
-
-            assert_eq!(blog.actor_id, blogs[0].actor_id);
-            assert_eq!(blog.title, blogs[0].title);
-            assert_eq!(blog.summary, blogs[0].summary);
-            assert_eq!(blog.outbox_url, blogs[0].outbox_url);
-            assert_eq!(blog.inbox_url, blogs[0].inbox_url);
-            assert_eq!(blog.instance_id, blogs[0].instance_id);
-            assert_eq!(blog.ap_url, blogs[0].ap_url);
-            assert_eq!(blog.public_key, blogs[0].public_key);
-            assert_eq!(blog.fqn, blogs[0].fqn);
-            assert_eq!(blog.summary_html, blogs[0].summary_html);
-            assert_eq!(blog.icon_url(conn), blogs[0].icon_url(conn));
-            assert_eq!(blog.banner_url(conn), blogs[0].banner_url(conn));
-
-            Ok(())
-        });
-    }
 }

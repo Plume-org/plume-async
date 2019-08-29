@@ -25,10 +25,6 @@ use reqwest::{
     header::{HeaderValue, ACCEPT},
     ClientBuilder,
 };
-use rocket::{
-    outcome::IntoOutcome,
-    request::{self, FromRequest, Request},
-};
 use serde_json;
 use std::{
     cmp::PartialEq,
@@ -47,7 +43,7 @@ use posts::Post;
 use safe_string::SafeString;
 use schema::users;
 use search::Searcher;
-use {ap_url, Connection, Error, PlumeRocket, Result};
+use {ap_url, Connection, Error, Result};
 
 pub type CustomPerson = CustomObject<ApSignature, Person>;
 
@@ -181,29 +177,6 @@ impl User {
             .map_err(Error::from)
     }
 
-    pub fn find_by_fqn(c: &PlumeRocket, fqn: &str) -> Result<User> {
-        let from_db = users::table
-            .filter(users::fqn.eq(fqn))
-            .limit(1)
-            .load::<User>(&*c.conn)?
-            .into_iter()
-            .next();
-        if let Some(from_db) = from_db {
-            Ok(from_db)
-        } else {
-            User::fetch_from_webfinger(c, fqn)
-        }
-    }
-
-    fn fetch_from_webfinger(c: &PlumeRocket, acct: &str) -> Result<User> {
-        let link = resolve(acct.to_owned(), true)?
-            .links
-            .into_iter()
-            .find(|l| l.mime_type == Some(String::from("application/activity+json")))
-            .ok_or(Error::Webfinger)?;
-        User::from_id(c, link.href.as_ref()?, None).map_err(|(_, e)| e)
-    }
-
     pub fn fetch_remote_interact_uri(acct: &str) -> Result<String> {
         resolve(acct.to_owned(), true)?
             .links
@@ -234,10 +207,6 @@ impl User {
         let mut json = serde_json::from_str::<CustomPerson>(text)?;
         json.custom_props = ap_sign;
         Ok(json)
-    }
-
-    pub fn fetch_from_url(c: &PlumeRocket, url: &str) -> Result<User> {
-        User::fetch(url).and_then(|json| User::from_activity(c, json))
     }
 
     pub fn refetch(&self, conn: &Connection) -> Result<()> {
@@ -683,20 +652,6 @@ impl User {
     }
 }
 
-impl<'a, 'r> FromRequest<'a, 'r> for User {
-    type Error = ();
-
-    fn from_request(request: &'a Request<'r>) -> request::Outcome<User, ()> {
-        let conn = request.guard::<DbConn>()?;
-        request
-            .cookies()
-            .get_private(AUTH_COOKIE)
-            .and_then(|cookie| cookie.value().parse().ok())
-            .and_then(|id| User::get(&*conn, id).ok())
-            .or_forward(())
-    }
-}
-
 impl IntoId for User {
     fn into_id(self) -> Id {
         Id::new(self.ap_url.clone())
@@ -704,135 +659,6 @@ impl IntoId for User {
 }
 
 impl Eq for User {}
-
-impl FromId<PlumeRocket> for User {
-    type Error = Error;
-    type Object = CustomPerson;
-
-    fn from_db(c: &PlumeRocket, id: &str) -> Result<Self> {
-        Self::find_by_ap_url(&c.conn, id)
-    }
-
-    fn from_activity(c: &PlumeRocket, acct: CustomPerson) -> Result<Self> {
-        let url = Url::parse(&acct.object.object_props.id_string()?)?;
-        let inst = url.host_str()?;
-        let instance = Instance::find_by_domain(&c.conn, inst).or_else(|_| {
-            Instance::insert(
-                &c.conn,
-                NewInstance {
-                    name: inst.to_owned(),
-                    public_domain: inst.to_owned(),
-                    local: false,
-                    // We don't really care about all the following for remote instances
-                    long_description: SafeString::new(""),
-                    short_description: SafeString::new(""),
-                    default_license: String::new(),
-                    open_registrations: true,
-                    short_description_html: String::new(),
-                    long_description_html: String::new(),
-                },
-            )
-        })?;
-
-        let username = acct.object.ap_actor_props.preferred_username_string()?;
-
-        if username.contains(&['<', '>', '&', '@', '\'', '"', ' ', '\t'][..]) {
-            return Err(Error::InvalidValue);
-        }
-
-        let fqn = if instance.local {
-            username.clone()
-        } else {
-            format!("{}@{}", username, instance.public_domain)
-        };
-
-        let user = User::insert(
-            &c.conn,
-            NewUser {
-                display_name: acct
-                    .object
-                    .object_props
-                    .name_string()
-                    .unwrap_or_else(|_| username.clone()),
-                username,
-                outbox_url: acct.object.ap_actor_props.outbox_string()?,
-                inbox_url: acct.object.ap_actor_props.inbox_string()?,
-                is_admin: false,
-                summary: acct
-                    .object
-                    .object_props
-                    .summary_string()
-                    .unwrap_or_default(),
-                summary_html: SafeString::new(
-                    &acct
-                        .object
-                        .object_props
-                        .summary_string()
-                        .unwrap_or_default(),
-                ),
-                email: None,
-                hashed_password: None,
-                instance_id: instance.id,
-                ap_url: acct.object.object_props.id_string()?,
-                public_key: acct
-                    .custom_props
-                    .public_key_publickey()?
-                    .public_key_pem_string()?,
-                private_key: None,
-                shared_inbox_url: acct
-                    .object
-                    .ap_actor_props
-                    .endpoints_endpoint()
-                    .and_then(|e| e.shared_inbox_string())
-                    .ok(),
-                followers_endpoint: acct.object.ap_actor_props.followers_string()?,
-                fqn,
-                avatar_id: None,
-            },
-        )?;
-
-        if let Ok(icon) = acct.object.object_props.icon_image() {
-            if let Ok(url) = icon.object_props.url_string() {
-                let avatar = Media::save_remote(&c.conn, url, &user);
-
-                if let Ok(avatar) = avatar {
-                    user.set_avatar(&c.conn, avatar.id)?;
-                }
-            }
-        }
-
-        Ok(user)
-    }
-}
-
-impl AsActor<&PlumeRocket> for User {
-    fn get_inbox_url(&self) -> String {
-        self.inbox_url.clone()
-    }
-
-    fn get_shared_inbox_url(&self) -> Option<String> {
-        self.shared_inbox_url.clone()
-    }
-
-    fn is_local(&self) -> bool {
-        Instance::get_local()
-            .map(|i| self.instance_id == i.id)
-            .unwrap_or(false)
-    }
-}
-
-impl AsObject<User, Delete, &PlumeRocket> for User {
-    type Error = Error;
-    type Output = ();
-
-    fn activity(self, c: &PlumeRocket, actor: User, _id: &str) -> Result<()> {
-        if self.id == actor.id {
-            self.delete(&c.conn, &c.searcher).map(|_| ())
-        } else {
-            Err(Error::Unauthorized)
-        }
-    }
-}
 
 impl Signer for User {
     type Error = Error;
@@ -913,7 +739,7 @@ pub(crate) mod tests {
     use diesel::Connection;
     use instance::{tests as instance_tests, Instance};
     use search::tests::get_searcher;
-    use tests::{db, rockets};
+    use tests::db;
     use Connection as Conn;
 
     pub(crate) fn fill_database(conn: &Conn) -> Vec<User> {
@@ -949,55 +775,6 @@ pub(crate) mod tests {
         )
         .unwrap();
         vec![admin, user, other]
-    }
-
-    #[test]
-    fn find_by() {
-        let r = rockets();
-        let conn = &*r.conn;
-        conn.test_transaction::<_, (), _>(|| {
-            fill_database(conn);
-            let test_user = NewUser::new_local(
-                conn,
-                "test".to_owned(),
-                "test user".to_owned(),
-                false,
-                "Hello I'm a test",
-                "test@example.com".to_owned(),
-                User::hash_pass("test_password").unwrap(),
-            )
-            .unwrap();
-
-            assert_eq!(
-                test_user.id,
-                User::find_by_name(conn, "test", Instance::get_local().unwrap().id)
-                    .unwrap()
-                    .id
-            );
-            assert_eq!(
-                test_user.id,
-                User::find_by_fqn(&r, &test_user.fqn).unwrap().id
-            );
-            assert_eq!(
-                test_user.id,
-                User::find_by_email(conn, "test@example.com").unwrap().id
-            );
-            assert_eq!(
-                test_user.id,
-                User::find_by_ap_url(
-                    conn,
-                    &format!(
-                        "https://{}/@/{}/",
-                        Instance::get_local().unwrap().public_domain,
-                        "test"
-                    )
-                )
-                .unwrap()
-                .id
-            );
-
-            Ok(())
-        });
     }
 
     #[test]
@@ -1085,34 +862,6 @@ pub(crate) mod tests {
                     .len() as i64,
                 User::count_local(conn).unwrap()
             );
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn self_federation() {
-        let r = rockets();
-        let conn = &*r.conn;
-        conn.test_transaction::<_, (), _>(|| {
-            let users = fill_database(conn);
-
-            let ap_repr = users[0].to_activity(conn).unwrap();
-            users[0].delete(conn, &*r.searcher).unwrap();
-            let user = User::from_activity(&r, ap_repr).unwrap();
-
-            assert_eq!(user.username, users[0].username);
-            assert_eq!(user.display_name, users[0].display_name);
-            assert_eq!(user.outbox_url, users[0].outbox_url);
-            assert_eq!(user.inbox_url, users[0].inbox_url);
-            assert_eq!(user.instance_id, users[0].instance_id);
-            assert_eq!(user.ap_url, users[0].ap_url);
-            assert_eq!(user.public_key, users[0].public_key);
-            assert_eq!(user.shared_inbox_url, users[0].shared_inbox_url);
-            assert_eq!(user.followers_endpoint, users[0].followers_endpoint);
-            assert_eq!(user.avatar_url(conn), users[0].avatar_url(conn));
-            assert_eq!(user.fqn, users[0].fqn);
-            assert_eq!(user.summary_html, users[0].summary_html);
 
             Ok(())
         });

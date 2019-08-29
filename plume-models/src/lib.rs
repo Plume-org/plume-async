@@ -22,8 +22,6 @@ extern crate plume_common;
 #[macro_use]
 extern crate plume_macro;
 extern crate reqwest;
-extern crate rocket;
-extern crate rocket_i18n;
 extern crate scheduled_thread_pool;
 extern crate serde;
 #[macro_use]
@@ -291,7 +289,6 @@ macro_rules! last {
 }
 
 mod config;
-pub use config::CONFIG;
 
 pub fn ap_url(url: &str) -> String {
     format!("https://{}", url)
@@ -311,7 +308,6 @@ mod tests {
     use std::env::temp_dir;
     use std::sync::Arc;
     use Connection as Conn;
-    use CONFIG;
 
     #[macro_export]
     macro_rules! part_eq {
@@ -327,29 +323,6 @@ mod tests {
     pub fn db<'a>() -> db_conn::DbConn {
         db_conn::DbConn((*DB_POOL).get().unwrap())
     }
-
-    lazy_static! {
-        static ref DB_POOL: db_conn::DbPool = {
-            let pool = db_conn::DbPool::builder()
-                .connection_customizer(Box::new(db_conn::PragmaForeignKey))
-                .build(ConnectionManager::<Conn>::new(CONFIG.database_url.as_str()))
-                .unwrap();
-            let dir = temp_dir().join(format!("plume-test-{}", random_hex()));
-            IMPORTED_MIGRATIONS
-                .run_pending_migrations(&pool.get().unwrap(), &dir)
-                .expect("Migrations error");
-            pool
-        };
-    }
-
-    pub fn rockets() -> super::PlumeRocket {
-        super::PlumeRocket {
-            conn: db_conn::DbConn((*DB_POOL).get().unwrap()),
-            searcher: Arc::new(search::tests::get_searcher()),
-            worker: Arc::new(ScheduledThreadPool::new(2)),
-            user: None,
-        }
-    }
 }
 
 pub mod admin;
@@ -361,7 +334,6 @@ pub mod comment_seers;
 pub mod comments;
 pub mod db_conn;
 pub mod follows;
-pub mod headers;
 pub mod inbox;
 pub mod instance;
 pub mod likes;
@@ -370,7 +342,6 @@ pub mod mentions;
 pub mod migrations;
 pub mod notifications;
 pub mod password_reset_requests;
-pub mod plume_rocket;
 pub mod post_authors;
 pub mod posts;
 pub mod reshares;
@@ -379,4 +350,3 @@ pub mod schema;
 pub mod search;
 pub mod tags;
 pub mod users;
-pub use plume_rocket::PlumeRocket;
