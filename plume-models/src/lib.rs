@@ -2,6 +2,7 @@
 #![feature(never_type)]
 #![feature(custom_attribute)]
 #![feature(proc_macro_hygiene)]
+#![allow(dead_code)]
 
 extern crate activitypub;
 extern crate ammonia;

@@ -1,4 +1,5 @@
 #![feature(custom_attribute, associated_type_defaults)]
+#![allow(dead_code)]
 
 extern crate activitypub;
 #[macro_use]
