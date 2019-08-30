@@ -2,6 +2,8 @@
 #![feature(decl_macro, proc_macro_hygiene, try_trait)]
 
 extern crate activitypub;
+extern crate actix_files;
+extern crate actix_web;
 extern crate askama_escape;
 extern crate atom_syndication;
 extern crate chrono;
@@ -34,6 +36,7 @@ extern crate validator;
 extern crate validator_derive;
 extern crate webfinger;
 
+use actix_web::{web as aweb, App as ActixApp, HttpResponse, HttpServer};
 use clap::App;
 use diesel::r2d2::ConnectionManager;
 use plume_models::{
@@ -52,13 +55,15 @@ init_i18n!(
     "plume", ar, bg, ca, cs, de, en, eo, es, fr, gl, hi, hr, it, ja, nb, pl, pt, ro, ru, sr, sk, sv
 );
 
+mod api;
 mod mail;
 #[cfg(feature = "test")]
 mod test_routes;
+mod web;
 
 compile_i18n!();
 
-fn main() {
+fn main() -> std::io::Result<()> {
     App::new("Plume")
         .bin_name("plume")
         .version(env!("CARGO_PKG_VERSION"))
@@ -79,6 +84,25 @@ and https://docs.joinplu.me/installation/init for more info.
     .expect("Error setting Ctrl-c handler");
 
     let mail = mail::init();
+
+    HttpServer::new(|| ActixApp::new().service(
+        aweb::scope("/")
+            .service(api::service())
+            .service(web::service())
+            .service(
+                // TODO: caching and co.
+                actix_files::Files::new("/static", "./static")
+            )
+            .default_service(
+                // TODO: real error page
+                aweb::route().to(|| HttpResponse::NotFound())
+            )
+    ))
+    .bind("127.0.0.1:7878")?
+    .run()?;
+
     println!("Welcome to the async experiment of Plume.");
     println!("If you can only see this message, we're not done yet.");
+
+    Ok(())
 }
