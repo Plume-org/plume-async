@@ -56,8 +56,6 @@ mod mail;
 #[cfg(feature = "test")]
 mod test_routes;
 
-include!(concat!(env!("OUT_DIR"), "/templates.rs"));
-
 compile_i18n!();
 
 fn main() {
