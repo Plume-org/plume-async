@@ -85,19 +85,21 @@ and https://docs.joinplu.me/installation/init for more info.
 
     let mail = mail::init();
 
-    HttpServer::new(|| ActixApp::new().service(
-        aweb::scope("/")
-            .service(api::service())
-            .service(web::service())
-            .service(
-                // TODO: caching and co.
-                actix_files::Files::new("/static", "./static")
-            )
-            .default_service(
-                // TODO: real error page
-                aweb::route().to(|| HttpResponse::NotFound())
-            )
-    ))
+    HttpServer::new(|| {
+        ActixApp::new().service(
+            aweb::scope("/")
+                .service(api::service())
+                .service(web::service())
+                .service(
+                    // TODO: caching and co.
+                    actix_files::Files::new("/static", "./static"),
+                )
+                .default_service(
+                    // TODO: real error page
+                    aweb::route().to(|| HttpResponse::NotFound()),
+                ),
+        )
+    })
     .bind("127.0.0.1:7878")?
     .run()?;
 

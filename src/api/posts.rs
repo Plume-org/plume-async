@@ -1,34 +1,36 @@
 use actix_web::{web, HttpResponse, Scope};
 
 pub fn service() -> Scope {
-	web::scope("/posts/")
-		.service(web::resource("/")
-			.route(web::get().to(list))
-			.route(web::post().to(create))
-		)
-		.service(web::resource("/{id}")
-			.route(web::get().to(details))
-			.route(web::put().to(update))
-			.route(web::delete().to(delete))
-		)
+    web::scope("/posts/")
+        .service(
+            web::resource("/")
+                .route(web::get().to(list))
+                .route(web::post().to(create)),
+        )
+        .service(
+            web::resource("/{id}")
+                .route(web::get().to(details))
+                .route(web::put().to(update))
+                .route(web::delete().to(delete)),
+        )
 }
 
 fn list() -> HttpResponse {
-	unimplemented!()
+    unimplemented!()
 }
 
 fn create() -> HttpResponse {
-	unimplemented!()
+    unimplemented!()
 }
 
 fn details() -> HttpResponse {
-	unimplemented!()
+    unimplemented!()
 }
 
 fn update() -> HttpResponse {
-	unimplemented!()
+    unimplemented!()
 }
 
 fn delete() -> HttpResponse {
-	unimplemented!()
+    unimplemented!()
 }
