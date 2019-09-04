@@ -290,6 +290,7 @@ macro_rules! last {
 }
 
 mod config;
+pub use config::CONFIG;
 
 pub fn ap_url(url: &str) -> String {
     format!("https://{}", url)

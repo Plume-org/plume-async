@@ -6,6 +6,8 @@ const DB_NAME: &str = "plume";
 const DB_NAME: &str = "plume_tests";
 
 pub struct Config {
+    pub address: String,
+    pub port: u16,
     pub base_url: String,
     pub database_url: String,
     pub db_name: &'static str,
@@ -140,4 +142,24 @@ impl Default for LogoConfig {
             other,
         }
     }
+}
+
+lazy_static! {
+    pub static ref CONFIG: Config = Config {
+        address: var("ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_owned()),
+        port: var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(7878),
+        base_url: var("BASE_URL").unwrap_or_else(|_| format!(
+            "127.0.0.1:{}",
+            var("PORT").unwrap_or_else(|_| "7878".to_owned())
+        )),
+        db_name: DB_NAME,
+        #[cfg(feature = "postgres")]
+        database_url: var("DATABASE_URL")
+            .unwrap_or_else(|_| format!("postgres://plume:plume@localhost/{}", DB_NAME)),
+        #[cfg(feature = "sqlite")]
+        database_url: var("DATABASE_URL").unwrap_or_else(|_| format!("{}.sqlite", DB_NAME)),
+        search_index: var("SEARCH_INDEX").unwrap_or_else(|_| "search_index".to_owned()),
+        logo: LogoConfig::default(),
+        default_theme: var("DEFAULT_THEME").unwrap_or_else(|_| "default-light".to_owned()),
+    };
 }

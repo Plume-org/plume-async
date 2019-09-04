@@ -40,6 +40,7 @@ use actix_web::{web as aweb, App as ActixApp, HttpResponse, HttpServer};
 use clap::App;
 use diesel::r2d2::ConnectionManager;
 use plume_models::{
+    CONFIG,
     db_conn::{DbPool, PragmaForeignKey},
     instance::Instance,
     migrations::IMPORTED_MIGRATIONS,
@@ -100,7 +101,7 @@ and https://docs.joinplu.me/installation/init for more info.
                 ),
         )
     })
-    .bind("127.0.0.1:7878")?
+    .bind(format!("{}:{}", CONFIG.address, CONFIG.port))?
     .run()?;
 
     println!("Welcome to the async experiment of Plume.");
