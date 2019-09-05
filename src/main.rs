@@ -12,6 +12,7 @@ extern crate colored;
 extern crate ctrlc;
 extern crate diesel;
 extern crate dotenv;
+extern crate env_logger;
 #[macro_use]
 extern crate gettext_macros;
 extern crate gettext_utils;
@@ -19,6 +20,8 @@ extern crate guid_create;
 extern crate heck;
 extern crate lettre;
 extern crate lettre_email;
+#[macro_use]
+extern crate log;
 extern crate multipart;
 extern crate num_cpus;
 extern crate plume_api;
@@ -65,6 +68,12 @@ mod web;
 compile_i18n!();
 
 fn main() -> std::io::Result<()> {
+    std::env::set_var("RUST_LOG", "debug");
+    env_logger::init();
+
+    info!("Welcome to the async experiment of Plume.");
+    info!("If you can only see this message, we're not done yet.");
+
     App::new("Plume")
         .bin_name("plume")
         .version(env!("CARGO_PKG_VERSION"))
@@ -102,10 +111,5 @@ and https://docs.joinplu.me/installation/init for more info.
         )
     })
     .bind(format!("{}:{}", CONFIG.address, CONFIG.port))?
-    .run()?;
-
-    println!("Welcome to the async experiment of Plume.");
-    println!("If you can only see this message, we're not done yet.");
-
-    Ok(())
+    .run()
 }
