@@ -67,7 +67,24 @@ mod web;
 
 compile_i18n!();
 
+/// Initializes a database pool
+fn init_pool() -> Option<DbPool> {
+    let manager = ConnectionManager::<Connection>::new(CONFIG.database_url.as_str());
+    let pool = DbPool::builder()
+        .connection_customizer(Box::new(PragmaForeignKey))
+        .build(manager)
+        .ok()?;
+    Instance::cache_local(&pool.get().unwrap());
+    Some(pool)
+}
+
 fn main() -> std::io::Result<()> {
+    match dotenv::dotenv() {
+        Ok(path) => println!("Configuration read from {}", path.display()),
+        Err(ref e) if e.not_found() => eprintln!("no .env was found"),
+        e => e.map(|_| ()).unwrap(),
+    }
+
     if let Err(_) = std::env::var("RUST_LOG") {
         std::env::set_var("RUST_LOG", "debug");
     }
@@ -97,9 +114,29 @@ and https://docs.joinplu.me/installation/init for more info.
 
     let mail = mail::init();
 
-    HttpServer::new(|| {
+    let dbpool = init_pool().expect("main: database pool initialization error");
+    if IMPORTED_MIGRATIONS
+        .is_pending(&dbpool.get().unwrap())
+        .unwrap_or(true)
+    {
+        panic!(
+            r#"
+It appear your database migration does not run the migration required
+by this version of Plume. To fix this, you can run migrations via
+this command:
+
+    plm migration run
+
+Then try to restart Plume.
+"#
+        )
+    }
+
+
+    HttpServer::new(move || {
         ActixApp::new()
             .wrap(middleware::Logger::default())
+            .data(dbpool.clone())
             .service(aweb::scope("/")
                 .service(api::service())
                 .service(web::service())
