@@ -85,7 +85,7 @@ fn init<'a>(args: &ArgMatches<'a>, conn: &Connection) {
         let searcher = Searcher::create(&path).unwrap();
         refill(args, conn, Some(searcher));
     } else {
-        eprintln!(
+        error!(
             "Can't create new index, {} exist and is not empty",
             path.to_str().unwrap()
         );
@@ -98,7 +98,7 @@ fn refill<'a>(args: &ArgMatches<'a>, conn: &Connection, searcher: Option<Searche
     let searcher = searcher.unwrap_or_else(|| Searcher::open(&path).unwrap());
 
     searcher.fill(conn).expect("Couldn't import post");
-    println!("Commiting result");
+    info!("Commiting result");
     searcher.commit();
 }
 

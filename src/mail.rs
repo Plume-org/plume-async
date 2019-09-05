@@ -15,7 +15,7 @@ mod mailer {
         type Result = Result<(), ()>;
 
         fn send(&mut self, email: SendableEmail) -> Self::Result {
-            println!(
+            debug!(
                 "{}: from=<{}> to=<{:?}>\n{:#?}",
                 email.message_id().to_string(),
                 email

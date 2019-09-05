@@ -10,6 +10,8 @@ extern crate base64;
 extern crate chrono;
 extern crate heck;
 extern crate hex;
+#[macro_use]
+extern crate log;
 extern crate openssl;
 extern crate pulldown_cmark;
 extern crate reqwest;

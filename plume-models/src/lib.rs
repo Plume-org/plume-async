@@ -16,6 +16,8 @@ extern crate heck;
 extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate log;
 extern crate migrations_internals;
 extern crate openssl;
 extern crate plume_api;

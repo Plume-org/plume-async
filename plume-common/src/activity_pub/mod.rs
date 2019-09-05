@@ -102,10 +102,10 @@ where
                 .send()
                 .and_then(|r| r.into_body().concat2())
                 .map(move |response| {
-                    println!("Successfully sent activity to inbox ({})", inbox);
-                    println!("Response: \"{:?}\"\n", response)
+                    info!("Successfully sent activity to inbox ({})", inbox);
+                    info!("Response: \"{:?}\"\n", response)
                 })
-                .map_err(|e| println!("Error while sending to inbox ({:?})", e)),
+                .map_err(|e| error!("Error while sending to inbox ({:?})", e)),
         );
     }
     rt.run().unwrap();

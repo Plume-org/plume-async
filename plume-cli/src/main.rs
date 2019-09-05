@@ -1,6 +1,9 @@
 extern crate clap;
 extern crate diesel;
 extern crate dotenv;
+extern crate env_logger;
+#[macro_use]
+extern crate log;
 extern crate plume_models;
 extern crate rpassword;
 
@@ -15,6 +18,11 @@ mod search;
 mod users;
 
 fn main() {
+    if let Err(_) = std::env::var("RUST_LOG") {
+        std::env::set_var("RUST_LOG", "debug");
+    }
+    env_logger::init();
+
     let mut app = App::new("Plume CLI")
         .bin_name("plm")
         .version(env!("CARGO_PKG_VERSION"))
@@ -26,8 +34,8 @@ fn main() {
     let matches = app.clone().get_matches();
 
     match dotenv::dotenv() {
-        Ok(path) => println!("Configuration read from {}", path.display()),
-        Err(ref e) if e.not_found() => eprintln!("no .env was found"),
+        Ok(path) => info!("Configuration read from {}", path.display()),
+        Err(ref e) if e.not_found() => error!("no .env was found"),
         e => e.map(|_| ()).unwrap(),
     }
     let conn = Conn::establish(CONFIG.database_url.as_str());
