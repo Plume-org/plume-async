@@ -39,7 +39,7 @@ extern crate validator;
 extern crate validator_derive;
 extern crate webfinger;
 
-use actix_web::{web as aweb, App as ActixApp, HttpResponse, HttpServer};
+use actix_web::{middleware, web as aweb, App as ActixApp, HttpResponse, HttpServer};
 use clap::App;
 use diesel::r2d2::ConnectionManager;
 use plume_models::{
@@ -98,8 +98,9 @@ and https://docs.joinplu.me/installation/init for more info.
     let mail = mail::init();
 
     HttpServer::new(|| {
-        ActixApp::new().service(
-            aweb::scope("/")
+        ActixApp::new()
+            .wrap(middleware::Logger::default())
+            .service(aweb::scope("/")
                 .service(api::service())
                 .service(web::service())
                 .service(
@@ -110,7 +111,7 @@ and https://docs.joinplu.me/installation/init for more info.
                     // TODO: real error page
                     aweb::route().to(|| HttpResponse::NotFound()),
                 ),
-        )
+            )
     })
     .bind(format!("{}:{}", CONFIG.address, CONFIG.port))?
     .run()
