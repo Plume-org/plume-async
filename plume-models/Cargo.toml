@@ -15,7 +15,6 @@ lazy_static = "*"
 migrations_internals= "1.4.0"
 openssl = "0.10.22"
 rocket = { git = "https://github.com/SergioBenitez/Rocket", rev = "async" }
-rocket_i18n = { git = "https://github.com/Plume-org/rocket_i18n", rev = "3eca920593b41d3232aec702733f5c91da8ec808" }
 reqwest = "0.9.20"
 scheduled-thread-pool = "0.2.2"
 serde = "1.0"
@@ -36,6 +35,12 @@ version = "0.4"
 [dependencies.diesel]
 features = ["r2d2", "chrono"]
 version = "1.4.2"
+
+[dependencies.rocket_i18n]
+git = "https://github.com/Plume-org/rocket_i18n"
+rev = "try/rocket-async"
+default-features = false
+features = ["rocket"]
 
 [dependencies.plume-api]
 path = "../plume-api"

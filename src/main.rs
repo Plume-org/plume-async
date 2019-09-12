@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_arguments)]
-#![feature(decl_macro, proc_macro_hygiene, try_trait)]
+#![feature(decl_macro, futures_api, proc_macro_hygiene, try_trait)]
 
 extern crate activitypub;
 extern crate askama_escape;
@@ -25,7 +25,6 @@ extern crate plume_models;
 #[macro_use]
 extern crate rocket;
 extern crate rocket_contrib;
-extern crate rocket_csrf;
 extern crate rocket_i18n;
 #[macro_use]
 extern crate runtime_fmt;
@@ -48,7 +47,6 @@ use plume_models::{
     search::{Searcher as UnmanagedSearcher, SearcherError},
     Connection, Error, CONFIG,
 };
-use rocket_csrf::CsrfFairingBuilder;
 use scheduled_thread_pool::ScheduledThreadPool;
 use std::process::exit;
 use std::sync::{Arc, Mutex};
@@ -265,7 +263,6 @@ Then try to restart Plume
                 routes::well_known::host_meta,
                 routes::well_known::nodeinfo,
                 routes::well_known::webfinger,
-                routes::errors::csrf_violation
             ],
         )
         .mount(
@@ -289,33 +286,7 @@ Then try to restart Plume
         .manage(dbpool)
         .manage(Arc::new(workpool))
         .manage(searcher)
-        .manage(include_i18n!())
-        .attach(
-            CsrfFairingBuilder::new()
-                .set_default_target(
-                    "/csrf-violation?target=<uri>".to_owned(),
-                    rocket::http::Method::Post,
-                )
-                .add_exceptions(vec![
-                    (
-                        "/inbox".to_owned(),
-                        "/inbox".to_owned(),
-                        rocket::http::Method::Post,
-                    ),
-                    (
-                        "/@/<name>/inbox".to_owned(),
-                        "/@/<name>/inbox".to_owned(),
-                        rocket::http::Method::Post,
-                    ),
-                    (
-                        "/api/<path..>".to_owned(),
-                        "/api/<path..>".to_owned(),
-                        rocket::http::Method::Post,
-                    ),
-                ])
-                .finalize()
-                .expect("main: csrf fairing creation error"),
-        );
+        .manage(include_i18n!());
 
     #[cfg(feature = "test")]
     let rocket = rocket.mount("/test", routes![test_routes::health,]);
